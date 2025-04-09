@@ -1,0 +1,324 @@
+'==================== 全局初始化部分 ====================
+Dim dm, Hwnd, screenX, screenY, startX, startY, endX, endY
+Dim imageSizeCache  ' 声明全局变量
+
+' 初始化大漠对象
+Set dm = CreateObject("dm.dmsoft")
+TracePrint "大漠对象初始化完成，版本: " & dm.Ver()
+
+' 初始化图片尺寸缓存字典
+Set imageSizeCache = CreateObject("Scripting.Dictionary")
+TracePrint "图片尺寸缓存字典已初始化"
+
+' 加载缓存文件（确保文件存在）
+Call LoadImageCache("image_cache.dat")
+TracePrint "已加载缓存项: " & imageSizeCache.Count
+
+' 初始化窗口参数
+Hwnd = dm.FindWindow("WTWindow", "赛尔Xin登录器")
+TracePrint "找到窗口句柄: " & Hwnd
+
+screenX = dm.GetScreenWidth()
+screenY = dm.GetScreenHeight()
+TracePrint "屏幕分辨率: " & screenX & "x" & screenY
+
+' 计算窗口区域
+If Hwnd = 0 Then
+    TracePrint "警告：未找到窗口，使用全屏坐标"
+    startX = 0 : startY = 0
+    endX = screenX : endY = screenY
+Else
+    Dim sRect, MyArray
+    sRect = Plugin.Window.GetWindowRect(Hwnd)
+    TracePrint "窗口矩形区域: " & sRect
+    
+    MyArray = Split(sRect, "|")
+    If UBound(MyArray) >= 3 Then
+        startX = Clng(MyArray(0)) : startY = Clng(MyArray(1))
+        endX = Clng(MyArray(2)) : endY = Clng(MyArray(3))
+        TracePrint "窗口坐标 - 左上(" & startX & "," & startY & ") 右下(" & endX & "," & endY & ")"
+    Else
+        TracePrint "警告：无法解析窗口坐标，使用全屏坐标"
+        startX = 0 : startY = 0
+        endX = screenX : endY = screenY
+    End If
+End If
+TracePrint "最终坐标范围: 左上(" & startX & "," & startY & ") 右下(" & endX & "," & endY & ")"
+
+'==================== 缓存加载函数 ====================
+Sub LoadImageCache(cacheFile)
+    Dim fso, ts, line, parts
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    ' 检查文件是否存在
+    If Not fso.FileExists(cacheFile) Then
+        TracePrint "警告: 缓存文件不存在 " & cacheFile
+        Exit Sub
+    End If
+    
+    ' 读取缓存内容
+    Set ts = fso.OpenTextFile(cacheFile, 1)  ' 1为只读模式
+    Do Until ts.AtEndOfStream
+        line = ts.ReadLine
+        parts = Split(line, "|")
+        If UBound(parts) >= 1 Then
+            imageSizeCache.Add parts(0), parts(1)  ' 使用全局字典对象
+        End If
+    Loop
+    ts.Close
+    TracePrint "已加载缓存项: " & imageSizeCache.Count
+End Sub
+
+'==================== 优化后的找图函数 ====================
+Function MoveToImageCenter(imagePath, similarity, offsetX, offsetY)
+    Dim result(2), dm_ret, finalX, finalY
+    Dim pic_size, sizeParts, imageWidth, imageHeight
+    
+    
+    ' ---------------------- 关键修改2：添加参数验证 ----------------------
+    If Trim(imagePath) = "" Or similarity < 0.1 Or similarity > 1 Then
+        TracePrint "参数错误: imagePath=" & imagePath & " similarity=" & similarity
+        result(0) = False
+        result(1) = -1
+        result(2) = -1
+        MoveToImageCenter = result
+        Exit Function
+    End If
+    ' ---------------------- 关键修改3：双重验证机制 ----------------------
+    dm_ret = dm.FindPic(startX, startY, endX, endY, imagePath, "000000", similarity, 1, intX, intY)
+    
+    ' 调试日志：打印原始返回值
+    TracePrint "[DEBUG] FindPic原始返回: dm_ret=" & dm_ret & " intX=" & intX & " intY=" & intY
+    
+    ' 新增返回值解析逻辑
+    If IsNumeric(intX) And IsNumeric(intY) And CInt(intX) >= 0 And CInt(intY) >= 0 And dm_ret <> "-1" Then
+        ' ---------------------- 成功找到的分支 ----------------------
+        ' 缓存尺寸优化（添加过期时间）
+        If Not imageSizeCache.Exists(imagePath) Then
+            pic_size = dm.GetPicSize(imagePath)
+            ' 新增尺寸有效性验证
+            If InStr(pic_size, ",") > 0 Then
+                imageSizeCache.Add imagePath, pic_size
+                TracePrint "新增尺寸缓存: " & imagePath & " => " & pic_size
+            Else
+                TracePrint "获取图片尺寸失败: " & imagePath
+                result(0) = False
+                result(1) = -1
+                result(2) = -1
+                MoveToImageCenter = result
+                Exit Function
+            End If
+        Else
+            pic_size = imageSizeCache(imagePath)
+        End If
+        
+        ' 新增尺寸分割验证
+        sizeParts = Split(pic_size, ",")
+        If UBound(sizeParts) >= 1 Then
+            imageWidth = CInt(sizeParts(0))
+            imageHeight = CInt(sizeParts(1))
+        Else
+            TracePrint "尺寸格式错误: " & pic_size
+            imageWidth = 0
+            imageHeight = 0
+        End If
+        
+        ' 计算最终坐标（添加防溢出保护）
+        finalX = CLng(intX) + (imageWidth \ 2) + CLng(offsetX)
+        finalY = CLng(intY) + (imageHeight \ 2) + CLng(offsetY)
+        finalX = Max(0, Min(finalX, screenWidth))  ' 假设有屏幕尺寸变量
+        finalY = Max(0, Min(finalY, screenHeight))
+        
+        ' 新增移动前坐标验证
+        If finalX < 0 Or finalY < 0 Then
+            TracePrint "计算坐标异常: X=" & finalX & " Y=" & finalY
+            result(0) = False
+            result(1) = -1
+            result(2) = -1
+            MoveToImageCenter = result
+            Exit Function
+        End If
+        dm.MoveTo finalX, finalY
+        result(0) = True
+        result(1) = finalX
+        result(2) = finalY
+        TracePrint "成功移动至: " & finalX & "," & finalY & " (原始坐标 " & intX & "," & intY & ")"
+    Else
+        ' ---------------------- 失败分支增强 ----------------------
+        result(0) = False
+        result(1) = -1
+        result(2) = -1
+        TracePrint "找图失败: " & imagePath 
+    End If
+    
+    MoveToImageCenter = result
+End Function
+
+' 使用分层封装结构
+' 第一层：基础功能封装
+'######################## 全局配置 ########################
+Const 目标楼层 = 11        ' 可改为21/31/1等
+Const 战斗次数 = 6        ' 需要完成的战斗轮次
+Const 技能间隔 = 50       ' 点击间隔时间(ms)
+
+Dim 楼层坐标 
+楼层坐标 = Array( _
+    "1,187,-47", _
+    "11,187,-7", _
+    "21,187,31", _
+    "31,187,71" _
+)
+'######################## 配置结束 ########################
+
+' 第一层：基础功能封装
+' 升级后的点击函数（支持状态检查+坐标返回）
+Sub 点击步骤(imagePath, offsetX, offsetY)
+    Dim retVal
+    Do
+        retVal = MoveToImageCenter(imagePath, 0.7, offsetX, offsetY) ' 接收返回的数组
+        If retVal(0) Then  ' 检查状态位
+            dm.MoveTo retVal(1), retVal(2)  ' 使用返回的坐标
+            LeftClick 1
+            Exit Do
+        End If
+    Loop
+End Sub
+
+Sub 连续点击(次数)
+    For i = 1 To 次数
+        LeftClick 1
+    Next
+End Sub
+
+
+' 升级后的关闭弹窗（增加返回值检查）
+Sub 关闭弹窗()
+    Dim ret
+    ret = MoveToImageCenter("E:\桌面\赛尔\关闭超能NoNo.bmp", 0.7, 0, 0)
+    If ret(0) Then LeftClick 1
+    ret = MoveToImageCenter("E:\桌面\赛尔\关闭个人资料.bmp", 0.7, 0, 0)
+    If ret(0) Then LeftClick 1
+End Sub
+
+' 第二层：业务功能封装
+Function 获取楼层坐标(楼层)
+    For Each item In 楼层坐标
+        arr = Split(item, ",")
+        If CInt(arr(0)) = 楼层 Then
+            获取楼层坐标 = Array(CInt(arr(1)), CInt(arr(2)))
+            Exit Function
+        End If
+    Next
+    获取楼层坐标 = Array(0,0)
+End Function
+
+Sub 选择楼层(目标层)
+    coord = 获取楼层坐标(目标层)
+    点击步骤 "E:\桌面\赛尔\选择楼层.bmp", coord(0), coord(1)
+End Sub
+
+Sub 智能回血()
+	点击步骤 "E:\桌面\赛尔\精灵背包.bmp", 0, 0
+    点击步骤 "E:\桌面\赛尔\塔里恢复.bmp", 0, 0
+    MoveTo 0, 0
+    点击步骤 "E:\桌面\赛尔\回血确认.bmp", 0, 0
+    点击步骤 "E:\桌面\赛尔\塔里恢复.bmp", 23, -275
+End Sub
+
+dm_ret = dm.SetPath("E:\桌面\赛尔\")
+
+
+' 第三层：主流程
+Do
+    ' ================= 进塔操作 =================
+    点击步骤 "E:\桌面\赛尔\勇者之塔.bmp", -29, 62
+    点击步骤 "E:\桌面\赛尔\选择楼层.bmp", 0, 0
+    MoveR 100, 0
+    选择楼层 目标楼层
+
+    ' ================= 战斗循环 =================
+    Dim confirm_count : confirm_count = 0
+    Do While confirm_count < 战斗次数
+        ' ---- 进入战斗 ----
+        Dim check_count : check_count = 0
+        Dim battleEnterResult, battlePosResult
+        Do
+            check_count = check_count + 1
+            ' 修复1：正确处理返回值
+            battleEnterResult = MoveToImageCenter("E:\桌面\赛尔\精灵背包.bmp", 0.7, 0, 455)
+            If battleEnterResult(0) Then 
+                dm.MoveTo battleEnterResult(1), battleEnterResult(2)
+                点击步骤 "E:\桌面\赛尔\精灵背包.bmp", 297, -161 
+            End If
+            
+            ' 修复2：正确校验战斗界面定位
+            battlePosResult = MoveToImageCenter("E:\桌面\赛尔\战斗界面定位.bmp", 0.7, 0, 455)
+            If battlePosResult(0) Then Exit Do
+            
+//            If check_count > 3 Then 关闭弹窗
+            TracePrint "未能进入战斗，重新寻找战斗入口(" & check_count & ")"
+        Loop
+
+        ' ---- 释放技能 ----
+        SaveMousePos
+		Dim skillResult, startTime
+		startTime = Timer()  ' 记录战斗开始时间
+        Do 
+            ' 技能连招（根据实际技能位置调整偏移量）
+            RestoreMousePos : 连续点击 2  ' 普通攻击
+//            RestoreMousePos : MoveR 150, 0  : 连续点击 2  ' 技能2
+            RestoreMousePos : MoveR 0, 60    : 连续点击 2  ' 技能3
+            
+    		' 当战斗持续10秒后开始检测
+    		If Timer() - startTime >= 10 Then 
+    			upResult = MoveToImageCenter("E:\桌面\赛尔\升级箭头.bmp", 0.7, - 97 , 134)
+    			If upResult(0) Then Exit Do
+        		skillResult = MoveToImageCenter("E:\桌面\赛尔\确认.bmp", 0.7, -100, 0)
+        		If skillResult(0) Then Exit Do
+        		TracePrint "战斗10秒后检测中..."
+    		Else
+        		TracePrint "战斗前10秒中..."
+    		End If
+        Loop
+
+        ' ---- 战斗结算 ----
+        Dim confirmResult, upResult
+        Do
+            confirmResult = MoveToImageCenter("E:\桌面\赛尔\确认.bmp", 0.7, 0, 0)
+            If confirmResult(0) Then
+                dm.MoveTo confirmResult(1), confirmResult(2)
+                连续点击 4
+                confirm_count = confirm_count + 1
+                Exit Do
+            End If
+            upResult = MoveToImageCenter("E:\桌面\赛尔\升级箭头.bmp", 0.7, - 97 , 134)
+            If upResult(0) Then
+                dm.MoveTo upResult(1), upResult(2)
+                LeftClick 1
+
+            End If
+        Loop
+
+        ' ---- 智能回血 ----
+        If confirm_count Mod 3 = 0 Then 
+            ' 修复4：增加状态检测防止死循环
+            Dim closeBagResult
+            closeBagResult = MoveToImageCenter("E:\桌面\赛尔\精灵背包.bmp", 0.7, 0, 0)
+            If closeBagResult(0) Then 
+                dm.MoveTo closeBagResult(1)+100, closeBagResult(2) ' 偏移关闭位置
+                LeftClick 1
+            End If
+            智能回血
+        End If
+    Loop
+
+    ' ================= 收尾操作 =================
+    ' 修复5：增加离开副本的可靠性检测
+    Dim exitResult
+    exitResult = MoveToImageCenter("E:\桌面\赛尔\离开.bmp", 0.7, 0, 0)
+    If exitResult(0) Then
+        dm.MoveTo exitResult(1), exitResult(2)
+        连续点击 3
+    End If
+    Delay 1500
+Loop
