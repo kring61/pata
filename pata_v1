@@ -2,7 +2,7 @@
 Dim dm, Hwnd, screenX, screenY, startX, startY, endX, endY
 Dim imageSizeCache  ' 声明全局变量
 
-' 初始化大漠对象 修改
+' 初始化大漠对象
 Set dm = CreateObject("dm.dmsoft")
 TracePrint "大漠对象初始化完成，版本: " & dm.Ver()
 
@@ -126,8 +126,7 @@ Function MoveToImageCenter(imagePath, similarity, offsetX, offsetY)
         ' 计算最终坐标（添加防溢出保护）
         finalX = CLng(intX) + (imageWidth \ 2) + CLng(offsetX)
         finalY = CLng(intY) + (imageHeight \ 2) + CLng(offsetY)
-        finalX = Max(0, Min(finalX, screenWidth))  ' 假设有屏幕尺寸变量
-        finalY = Max(0, Min(finalY, screenHeight))
+
         
         ' 新增移动前坐标验证
         If finalX < 0 Or finalY < 0 Then
@@ -157,8 +156,8 @@ End Function
 ' 使用分层封装结构
 ' 第一层：基础功能封装
 '######################## 全局配置 ########################
-Const 目标楼层 = 11        ' 可改为21/31/1等
-Const 战斗次数 = 6        ' 需要完成的战斗轮次
+Const 目标楼层 = 31        ' 可改为21/31/1等
+Const 战斗次数 = 7        ' 需要完成的战斗轮次
 Const 技能间隔 = 50       ' 点击间隔时间(ms)
 
 Dim 楼层坐标 
@@ -218,12 +217,143 @@ Sub 选择楼层(目标层)
 End Sub
 
 Sub 智能回血()
-	点击步骤 "E:\桌面\赛尔\精灵背包.bmp", 0, 0
+    点击步骤 "E:\桌面\赛尔\精灵背包.bmp", 0, 0
     点击步骤 "E:\桌面\赛尔\塔里恢复.bmp", 0, 0
     MoveTo 0, 0
     点击步骤 "E:\桌面\赛尔\回血确认.bmp", 0, 0
     点击步骤 "E:\桌面\赛尔\塔里恢复.bmp", 23, -275
 End Sub
+
+' 固定参数（直接内置在函数中）
+Const TARGET_IMAGE = "E:\桌面\赛尔\精灵背包.bmp"
+Const CLICK_OFFSET_X = 297
+Const CLICK_OFFSET_Y = -161
+Const TARGET_COLOR = "ffffff"
+' =============== 专用函数定义 ===============
+Sub EnterBattleScene()
+    Dim battleEnterResult, keepClicking
+    Dim centerX, centerY, color
+    
+    ' 初始找图
+    battleEnterResult = MoveToImageCenter(TARGET_IMAGE, 0.7, 0, 0)
+    keepClicking = True
+    
+    ' 循环点击直到颜色不匹配
+    While keepClicking
+        If battleEnterResult(0) Then 
+            ' 获取图片中心坐标
+            centerX = battleEnterResult(1)
+            centerY = battleEnterResult(2)
+            
+            ' 移动鼠标避免干扰
+            dm.MoveR 100, 0
+            Delay 50
+            
+            ' 获取颜色并验证
+            color = LCase(dm.GetColor(centerX, centerY))
+            TracePrint "[战斗] 坐标(" & centerX & "," & centerY & ") 颜色=" & color
+            
+            If color = TARGET_COLOR Then
+                ' 执行带偏移点击
+                dm.MoveTo centerX + CLICK_OFFSET_X, centerY + CLICK_OFFSET_Y
+                LeftClick 1
+                TracePrint "[战斗] 执行点击 (" & centerX + CLICK_OFFSET_X & "," & centerY + CLICK_OFFSET_Y & ")"
+                
+                Delay 200
+            Else
+                TracePrint "[战斗] 颜色验证失败，退出循环"
+                keepClicking = False
+            End If
+        Else
+            TracePrint "[战斗] 图片定位失败"
+            keepClicking = False
+        End If
+    Wend
+End Sub
+
+
+' 常量定义移到函数外部（全局区域）
+Const END_COLOR_POS1 = 175   ' 结束界面Y偏移1
+Const END_COLOR_POS2 = 350   ' 结束界面Y偏移2
+Const END_COLOR1 = "2fa7ee"  ' 结束界面颜色1
+Const END_COLOR2 = "c6d7e7"  ' 结束界面颜色2
+Const LEVELUP_COLOR_POS1 = 114  ' 升级弹窗Y偏移1
+Const LEVELUP_COLOR_POS2 = 172  ' 升级弹窗Y偏移2
+Const LEVELUP_COLOR1 = "49b8f2" ' 升级弹窗颜色1
+Const LEVELUP_COLOR2 = "088604" ' 升级弹窗颜色2
+
+' 循环条件变量
+Dim keepClicking
+keepClicking = True
+Dim totalClickCount
+totalClickCount = 0
+
+' =============== 战斗结束确认函数（含升级检测） ===============
+' 功能：检测战斗是否真正结束（排除升级弹窗干扰）
+' 返回值：Boolean - 是否通过验证
+Function IsBattleEnd(battlePos)
+    If battlePosResult(0) Then
+        ' 计算升级弹窗检查点
+        Dim levelupY1, levelupY2
+        levelupY1 = battlePosResult(2) + LEVELUP_COLOR_POS1
+        levelupY2 = battlePosResult(2) + LEVELUP_COLOR_POS2
+        
+        ' 获取升级弹窗颜色
+        Dim lvColor1, lvColor2
+        dm.MoveTo 0, 0  ' 移开鼠标
+        lvColor1 = LCase(dm.GetColor(battlePosResult(1), levelupY1))
+        lvColor2 = LCase(dm.GetColor(battlePosResult(1)+104, levelupY2))
+        TracePrint "[战斗结束] 结束验证点1(" & battlePosResult(1) & "," & endY1 & "): " & lvColor1
+        TracePrint "[战斗结束] 结束验证点2(" & battlePosResult(1) & "," & endY2 & "): " & lvColor2
+        ' 升级弹窗验证
+        If lvColor1 = LEVELUP_COLOR1 And lvColor2 = LEVELUP_COLOR2 Then
+            TracePrint "[战斗结束] 检测到升级弹窗，暂未真正结束"
+            IsBattleEnd = True
+            dm.MoveTo battlePosResult(1), battlePosResult(2) + 400
+            LeftClick 1
+            dm.MoveTo battlePosResult(1), battlePosResult(2) + END_COLOR_POS2
+        	LeftClick 2
+            Exit Function
+        End If
+    End If
+    
+    ' 2. 检测战斗结束界面
+    If Not battlePosResult(0) Then
+        TracePrint "[战斗结束] 错误：未找到战斗界面"
+        IsBattleEnd = False
+        Exit Function
+    End If
+    
+    ' 计算结束界面检查点
+    Dim endY1, endY2
+    endY1 = battlePosResult(2) + END_COLOR_POS1
+    endY2 = battlePosResult(2) + END_COLOR_POS2
+    
+    ' 获取结束界面颜色
+    dm.MoveTo 0, 0  ' 移开鼠标
+    endColor1 = LCase(dm.GetColor(battlePosResult(1), endY1))
+    endColor2 = LCase(dm.GetColor(battlePosResult(1), endY2))
+    
+    ' 调试信息
+    TracePrint "[战斗结束] 结束验证点1(" & battlePosResult(1) & "," & endY1 & "): " & endColor1
+    TracePrint "[战斗结束] 结束验证点2(" & battlePosResult(1) & "," & endY2 & "): " & endColor2
+    
+    ' 返回最终验证结果
+    IsBattleEnd = (endColor1 = END_COLOR1 And endColor2 = END_COLOR2)
+
+    
+    If IsBattleEnd Then
+        TracePrint "[战斗结束] 验证通过，战斗真正结束"
+            ' 执行确认操作
+    	dm.MoveTo battlePosResult(1), battlePosResult(2) + END_COLOR_POS2
+    	LeftClick 1
+    	LeftClick 1
+    	LeftClick 1
+    	LeftClick 1
+    Else
+        TracePrint "[战斗结束] 验证未通过"
+    End If
+End Function
 
 dm_ret = dm.SetPath("E:\桌面\赛尔\")
 
@@ -245,14 +375,10 @@ Do
         Do
             check_count = check_count + 1
             ' 修复1：正确处理返回值
-            battleEnterResult = MoveToImageCenter("E:\桌面\赛尔\精灵背包.bmp", 0.7, 0, 455)
-            If battleEnterResult(0) Then 
-                dm.MoveTo battleEnterResult(1), battleEnterResult(2)
-                点击步骤 "E:\桌面\赛尔\精灵背包.bmp", 297, -161 
-            End If
+            ' 
+            EnterBattleScene    
             
-            ' 修复2：正确校验战斗界面定位
-            battlePosResult = MoveToImageCenter("E:\桌面\赛尔\战斗界面定位.bmp", 0.7, 0, 455)
+            battlePosResult = MoveToImageCenter("E:\桌面\赛尔\战斗界面定位.bmp", 0.7, 0, 0)
             If battlePosResult(0) Then Exit Do
             
 //            If check_count > 3 Then 关闭弹窗
@@ -260,44 +386,19 @@ Do
         Loop
 
         ' ---- 释放技能 ----
+        dm.MoveTo battlePosResult(1), battlePosResult(2) + 455
         SaveMousePos
-		Dim skillResult, startTime
-		startTime = Timer()  ' 记录战斗开始时间
         Do 
             ' 技能连招（根据实际技能位置调整偏移量）
             RestoreMousePos : 连续点击 2  ' 普通攻击
 //            RestoreMousePos : MoveR 150, 0  : 连续点击 2  ' 技能2
             RestoreMousePos : MoveR 0, 60    : 连续点击 2  ' 技能3
-            
-    		' 当战斗持续10秒后开始检测
-    		If Timer() - startTime >= 10 Then 
-    			upResult = MoveToImageCenter("E:\桌面\赛尔\升级箭头.bmp", 0.7, - 97 , 134)
-    			If upResult(0) Then Exit Do
-        		skillResult = MoveToImageCenter("E:\桌面\赛尔\确认.bmp", 0.7, -100, 0)
-        		If skillResult(0) Then Exit Do
-        		TracePrint "战斗10秒后检测中..."
-    		Else
-        		TracePrint "战斗前10秒中..."
-    		End If
+            If IsBattleEnd(battlePosResult) Then Exit Do
         Loop
 
         ' ---- 战斗结算 ----
-        Dim confirmResult, upResult
-        Do
-            confirmResult = MoveToImageCenter("E:\桌面\赛尔\确认.bmp", 0.7, 0, 0)
-            If confirmResult(0) Then
-                dm.MoveTo confirmResult(1), confirmResult(2)
-                连续点击 4
-                confirm_count = confirm_count + 1
-                Exit Do
-            End If
-            upResult = MoveToImageCenter("E:\桌面\赛尔\升级箭头.bmp", 0.7, - 97 , 134)
-            If upResult(0) Then
-                dm.MoveTo upResult(1), upResult(2)
-                LeftClick 1
 
-            End If
-        Loop
+        confirm_count = confirm_count + 1
 
         ' ---- 智能回血 ----
         If confirm_count Mod 3 = 0 Then 
@@ -314,11 +415,22 @@ Do
 
     ' ================= 收尾操作 =================
     ' 修复5：增加离开副本的可靠性检测
-    Dim exitResult
-    exitResult = MoveToImageCenter("E:\桌面\赛尔\离开.bmp", 0.7, 0, 0)
-    If exitResult(0) Then
-        dm.MoveTo exitResult(1), exitResult(2)
-        连续点击 3
-    End If
+	Dim exitResult, yongzheResult
+	Do
+    	' Check for 离开 image
+    	exitResult = MoveToImageCenter("E:\桌面\赛尔\离开.bmp", 0.7, 0, 0)
+    	If exitResult(0) Then
+        	dm.MoveTo exitResult(1), exitResult(2)
+        	连续点击 3
+    	End If
+    	
+    	' Check for 勇者之塔 image
+    	yongzheResult = MoveToImageCenter("E:\桌面\赛尔\勇者之塔.bmp", 0.7, 0, 0)
+    	If yongzheResult(0) Then
+        	dm.MoveTo 0, 0  ' Move mouse to (0,0) before exiting
+        	Exit Do
+    	End If
+    	
+	Loop
     Delay 1500
 Loop
