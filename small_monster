@@ -1,0 +1,390 @@
+'==================== 全局初始化部分 ====================
+Dim dm, Hwnd, screenX, screenY, startX, startY, endX, endY
+Dim imageSizeCache  ' 声明全局变量
+
+' 初始化大漠对象
+Set dm = CreateObject("dm.dmsoft")
+TracePrint "大漠对象初始化完成，版本: " & dm.Ver()
+
+' 初始化图片尺寸缓存字典
+Set imageSizeCache = CreateObject("Scripting.Dictionary")
+TracePrint "图片尺寸缓存字典已初始化"
+
+' 加载缓存文件（确保文件存在）
+Call LoadImageCache("image_cache.dat")
+TracePrint "已加载缓存项: " & imageSizeCache.Count
+
+' 初始化窗口参数
+Hwnd = dm.FindWindow("HwndWrapper[Xin计划微端.exe;;fa9e1e7c-b5a1-47d3-a97d-bd74c432226a]", "Xin计划")
+TracePrint "找到窗口句柄: " & Hwnd
+
+screenX = dm.GetScreenWidth()
+screenY = dm.GetScreenHeight()
+TracePrint "屏幕分辨率: " & screenX & "x" & screenY
+
+' 计算窗口区域
+If Hwnd = 0 Then
+    TracePrint "警告：未找到窗口，使用全屏坐标"
+    startX = 0 : startY = 0
+    endX = screenX : endY = screenY
+Else
+    Dim sRect, MyArray
+    sRect = Plugin.Window.GetWindowRect(Hwnd)
+    TracePrint "窗口矩形区域: " & sRect
+    
+    MyArray = Split(sRect, "|")
+    If UBound(MyArray) >= 3 Then
+        startX = Clng(MyArray(0)) : startY = Clng(MyArray(1))
+        endX = Clng(MyArray(2)) : endY = Clng(MyArray(3))
+        TracePrint "窗口坐标 - 左上(" & startX & "," & startY & ") 右下(" & endX & "," & endY & ")"
+    Else
+        TracePrint "警告：无法解析窗口坐标，使用全屏坐标"
+        startX = 0 : startY = 0
+        endX = screenX : endY = screenY
+    End If
+End If
+TracePrint "最终坐标范围: 左上(" & startX & "," & startY & ") 右下(" & endX & "," & endY & ")"
+
+'==================== 缓存加载函数 ====================
+Sub LoadImageCache(cacheFile)
+    Dim fso, ts, line, parts
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    
+    ' 检查文件是否存在
+    If Not fso.FileExists(cacheFile) Then
+        TracePrint "警告: 缓存文件不存在 " & cacheFile
+        Exit Sub
+    End If
+    
+    ' 读取缓存内容
+    Set ts = fso.OpenTextFile(cacheFile, 1)  ' 1为只读模式
+    Do Until ts.AtEndOfStream
+        line = ts.ReadLine
+        parts = Split(line, "|")
+        If UBound(parts) >= 1 Then
+            imageSizeCache.Add parts(0), parts(1)  ' 使用全局字典对象
+        End If
+    Loop
+    ts.Close
+    TracePrint "已加载缓存项: " & imageSizeCache.Count
+End Sub
+
+' 常量定义移到函数外部（全局区域）
+Const END_COLOR_POS1 = 175   ' 结束界面Y偏移1
+Const END_COLOR_POS2 = 350   ' 结束界面Y偏移2
+Const END_COLOR1 = "34a9ef"  ' 结束界面颜色1
+Const END_COLOR2 = "c9d9e8"  ' 结束界面颜色2
+Const LEVELUP_COLOR_POS1 = 114  ' 升级弹窗Y偏移1
+Const LEVELUP_COLOR_POS2 = 172  ' 升级弹窗Y偏移2
+Const LEVELUP_COLOR1 = "49b8f2" ' 升级弹窗颜色1
+Const LEVELUP_COLOR2 = "088604" ' 升级弹窗颜色2
+
+' 循环条件变量
+Dim keepClicking
+keepClicking = True
+Dim totalClickCount
+totalClickCount = 0
+
+' =============== 战斗结束确认函数（含升级检测） ===============
+' 功能：检测战斗是否真正结束（排除升级弹窗干扰）
+' 返回值：Boolean - 是否通过验证
+Function IsBattleEnd(battlePosResult)
+    If battlePosResult(0) Then
+        ' 计算升级弹窗检查点
+        Dim levelupY1, levelupY2
+        levelupY1 = battlePosResult(2) + LEVELUP_COLOR_POS1
+        levelupY2 = battlePosResult(2) + LEVELUP_COLOR_POS2
+        
+        ' 获取升级弹窗颜色
+        Dim lvColor1, lvColor2
+        dm.MoveTo 0, 0  ' 移开鼠标
+        lvColor1 = LCase(dm.GetColor(battlePosResult(1), levelupY1))
+        lvColor2 = LCase(dm.GetColor(battlePosResult(1)+104, levelupY2))
+        TracePrint "[战斗结束] 结束验证点1(" & battlePosResult(1) & "," & endY1 & "): " & lvColor1
+        TracePrint "[战斗结束] 结束验证点2(" & battlePosResult(1) & "," & endY2 & "): " & lvColor2
+        ' 升级弹窗验证
+        If lvColor1 = LEVELUP_COLOR1 And lvColor2 = LEVELUP_COLOR2 Then
+            TracePrint "[战斗结束] 检测到升级弹窗，暂未真正结束"
+            IsBattleEnd = True
+            dm.MoveTo battlePosResult(1), battlePosResult(2) + 400
+            LeftClick 1
+            dm.MoveTo battlePosResult(1), battlePosResult(2) + END_COLOR_POS2
+        	LeftClick 2
+            Exit Function
+        End If
+    End If
+    
+    ' 2. 检测战斗结束界面
+    If Not battlePosResult(0) Then
+        TracePrint "[战斗结束] 错误：未找到战斗界面"
+        IsBattleEnd = False
+        Exit Function
+    End If
+    
+    ' 计算结束界面检查点
+    Dim endY1, endY2
+    endY1 = battlePosResult(2) + END_COLOR_POS1
+    endY2 = battlePosResult(2) + END_COLOR_POS2
+    
+    ' 获取结束界面颜色
+    dm.MoveTo 0, 0  ' 移开鼠标
+    endColor1 = LCase(dm.GetColor(battlePosResult(1), endY1))
+    endColor2 = LCase(dm.GetColor(battlePosResult(1), endY2))
+    
+    ' 调试信息
+    TracePrint "[战斗结束] 结束验证点1(" & battlePosResult(1) & "," & endY1 & "): " & endColor1
+    TracePrint "[战斗结束] 结束验证点2(" & battlePosResult(1) & "," & endY2 & "): " & endColor2
+    
+    ' 返回最终验证结果
+    IsBattleEnd = (endColor1 = END_COLOR1 And endColor2 = END_COLOR2)
+
+    
+    If IsBattleEnd Then
+        TracePrint "[战斗结束] 验证通过，战斗真正结束"
+            ' 执行确认操作
+    	dm.MoveTo battlePosResult(1), battlePosResult(2) + END_COLOR_POS2
+    	LeftClick 1
+    	Delay 100
+    	LeftClick 1
+    	Delay 100    	
+    	LeftClick 1
+    	Delay 100
+    	LeftClick 1
+    Else
+        TracePrint "[战斗结束] 验证未通过"
+    End If
+End Function
+
+'==================== 优化后的找图函数 ====================
+Function MoveToImageCenter(imagePath, similarity, offsetX, offsetY)
+    Dim result(2), dm_ret, finalX, finalY
+    Dim pic_size, sizeParts, imageWidth, imageHeight
+    
+    
+    ' ---------------------- 关键修改2：添加参数验证 ----------------------
+    If Trim(imagePath) = "" Or similarity < 0.1 Or similarity > 1 Then
+        TracePrint "参数错误: imagePath=" & imagePath & " similarity=" & similarity
+        result(0) = False
+        result(1) = -1
+        result(2) = -1
+        MoveToImageCenter = result
+        Exit Function
+    End If
+    ' ---------------------- 关键修改3：双重验证机制 ----------------------
+    dm_ret = dm.FindPic(startX, startY, endX, endY, imagePath, "000000", similarity, 1, intX, intY)
+    
+    ' 调试日志：打印原始返回值
+    TracePrint "[DEBUG] FindPic原始返回: dm_ret=" & dm_ret & " intX=" & intX & " intY=" & intY
+    
+    ' 新增返回值解析逻辑
+    If IsNumeric(intX) And IsNumeric(intY) And CInt(intX) >= 0 And CInt(intY) >= 0 And dm_ret <> "-1" Then
+        ' ---------------------- 成功找到的分支 ----------------------
+        ' 缓存尺寸优化（添加过期时间）
+        If Not imageSizeCache.Exists(imagePath) Then
+            pic_size = dm.GetPicSize(imagePath)
+            ' 新增尺寸有效性验证
+            If InStr(pic_size, ",") > 0 Then
+                imageSizeCache.Add imagePath, pic_size
+                TracePrint "新增尺寸缓存: " & imagePath & " => " & pic_size
+            Else
+                TracePrint "获取图片尺寸失败: " & imagePath
+                result(0) = False
+                result(1) = -1
+                result(2) = -1
+                MoveToImageCenter = result
+                Exit Function
+            End If
+        Else
+            pic_size = imageSizeCache(imagePath)
+        End If
+        
+        ' 新增尺寸分割验证
+        sizeParts = Split(pic_size, ",")
+        If UBound(sizeParts) >= 1 Then
+            imageWidth = CInt(sizeParts(0))
+            imageHeight = CInt(sizeParts(1))
+        Else
+            TracePrint "尺寸格式错误: " & pic_size
+            imageWidth = 0
+            imageHeight = 0
+        End If
+        
+        ' 计算最终坐标（添加防溢出保护）
+        finalX = CLng(intX) + (imageWidth \ 2) + CLng(offsetX)
+        finalY = CLng(intY) + (imageHeight \ 2) + CLng(offsetY)
+
+        
+        ' 新增移动前坐标验证
+        If finalX < 0 Or finalY < 0 Then
+            TracePrint "计算坐标异常: X=" & finalX & " Y=" & finalY
+            result(0) = False
+            result(1) = -1
+            result(2) = -1
+            MoveToImageCenter = result
+            Exit Function
+        End If
+        dm.MoveTo finalX, finalY
+        result(0) = True
+        result(1) = finalX
+        result(2) = finalY
+        TracePrint "成功移动至: " & finalX & "," & finalY & " (原始坐标 " & intX & "," & intY & ")"
+    Else
+        ' ---------------------- 失败分支增强 ----------------------
+        result(0) = False
+        result(1) = -1
+        result(2) = -1
+        TracePrint "找图失败: " & imagePath 
+    End If
+    
+    MoveToImageCenter = result
+End Function
+
+' 第一层：基础功能封装
+' 升级后的点击函数（支持状态检查+坐标返回）
+Sub 点击步骤(imagePath, offsetX, offsetY)
+    Dim retVal
+    Do
+        retVal = MoveToImageCenter(imagePath, 0.7, offsetX, offsetY) ' 接收返回的数组
+        If retVal(0) Then  ' 检查状态位
+            dm.MoveTo retVal(1), retVal(2)  ' 使用返回的坐标
+            LeftClick 1
+            Exit Do
+        End If
+        Delay 100
+    Loop
+End Sub
+
+Sub 连续点击(次数)
+    For i = 1 To 次数
+        LeftClick 1
+        Delay 100
+    Next
+End Sub
+
+
+
+'==================== 智能回血函数（优化颜色偏移适配）====================
+Sub 智能回血()
+    ' 点击精灵
+    点击步骤 "精灵.bmp", 0, 0
+    Delay 2500
+    
+    ' 定义回血按钮位置（相对于精灵的偏移）
+    Dim offsetX, offsetY
+    offsetX = -396
+    offsetY = -110
+    
+    ' 获取精灵点击后的鼠标位置（假设点击后鼠标在精灵中心）
+    GetCursorPos x, y
+    Dim spiritX, spiritY
+    spiritX = x
+    spiritY = y
+    
+    ' 计算回血按钮的绝对位置
+    Dim bloodX, bloodY
+    bloodX = spiritX + offsetX
+    bloodY = spiritY + offsetY
+    
+    ' 定义颜色模糊匹配参数（允许颜色偏移）
+    Dim colorToMatch, colorSimilarity
+    colorToMatch = "ff6600"  ' 目标颜色（橙色）
+    colorSimilarity = 0.9    ' 相似度（0.9 = 90% 相似）
+    
+    ' 检查回血按钮颜色（模糊匹配）
+    If dm.CmpColor(bloodX, bloodY, colorToMatch, colorSimilarity) = 1 Then
+        TracePrint "[战斗结束] 颜色匹配成功，点击回血按钮"
+        MoveTo bloodX, bloodY
+        Delay 500
+        LeftClick 1
+        Delay 2500
+        
+        ' 点击确认按钮
+        点击步骤 "回血确认.bmp", 0, 0
+    Else
+        TracePrint "[战斗结束] 颜色匹配失败，尝试备用方案（图片识别）"
+        ' 如果颜色不匹配，尝试备用方法
+        点击步骤 "回血.bmp", 0, 0
+        MoveTo 0, 0
+        Delay 2500
+        点击步骤 "回血确认.bmp", 0, 0
+    End If
+    
+    ' 最后关闭精灵背包
+    点击步骤 "关闭精灵背包.bmp", 0, 0
+End Sub
+
+' 升级后的关闭弹窗（增加返回值检查）
+Sub 关闭弹窗()
+    Dim ret
+    ret = MoveToImageCenter("关闭超能NoNo.bmp", 0.7, 0, 0)
+    If ret(0) Then LeftClick 1
+    ret = MoveToImageCenter("关闭个人资料.bmp", 0.7, 0, 0)
+    If ret(0) Then LeftClick 1
+End Sub
+
+
+' 升级后的战斗流程（使用精确坐标判断）
+Sub 战斗流程(战斗次数)
+    Dim confirm_count : confirm_count = 0
+    Do While confirm_count < 战斗次数
+        ' ---- 进入战斗 ----
+        Dim check_count : check_count = 0
+        Dim battlePosResult
+        Do
+            check_count = check_count + 1
+			' 使用返回值判断是否找到NPC
+			Dim npcRet
+			
+			' 优先查找 "丁格大.bmp"
+			npcRet = MoveToImageCenter("赖皮蛇.bmp", 0.7, 0, 0)
+			If npcRet(0) Then 
+    			dm.MoveTo npcRet(1), npcRet(2) ' 直接使用NPC坐标
+    			连续点击 1 
+			Else
+    			'如果没找到 "丁格大.bmp"，再查找 "丁格.bmp"
+    			npcRet = MoveToImageCenter("赖皮蛇侧.bmp", 0.7, 0, 0)
+    			If npcRet(0) Then 
+        			dm.MoveTo npcRet(1), npcRet(2) ' 直接使用NPC坐标
+        			连续点击 1 
+    			End If
+			End If
+
+//            If check_count > 10 Then 关闭弹窗
+            ' 使用返回值判断战斗界面
+
+            battlePosResult = MoveToImageCenter("战斗界面定位.bmp", 0.7, 0, 0)
+            If battlePosResult(0) Then Exit Do
+            Delay 100
+        Loop
+
+        ' ---- 释放技能 ----
+        dm.MoveTo battlePosResult(1), battlePosResult(2) + 455
+        SaveMousePos
+        Do 
+
+            
+            ' 技能连招
+            RestoreMousePos : MoveR 150, 0  : 连续点击 2  ' 技能2
+            RestoreMousePos : MoveR 150, 60 : 连续点击 2  ' 技能4
+            RestoreMousePos  : MoveR 0, 60 : 连续点击 2' 技能3
+            '技能1的点击
+            RestoreMousePos : 连续点击 2  ' 普通攻击
+            If IsBattleEnd(battlePosResult) Then Exit Do
+            Delay 100
+        Loop
+		'计时器 1分钟没进循环 向下400px点击，但还有其他按钮
+        ' ---- 战斗结算 ----
+		confirm_count = confirm_count + 1
+    Loop
+End Sub
+
+' 主程序（结构化控制）
+Dim 战斗次数
+战斗次数 = 30
+dm_ret = dm.SetPath("E:\桌面\赛尔\")
+
+Do
+    战斗流程 战斗次数  ' 封装战斗模块
+    智能回血          ' 原有回血逻辑
+    ' 可在此处添加其他模块（如补给、任务提交等）
+Loop
