@@ -156,8 +156,8 @@ End Function
 ' 使用分层封装结构
 ' 第一层：基础功能封装
 '######################## 全局配置 ########################
-Const 目标楼层 = 31        ' 可改为21/31/1等
-Const 战斗次数 = 7        ' 需要完成的战斗轮次
+Const 目标楼层 = 11        ' 可改为21/31/1等
+Const 战斗次数 = 9        ' 需要完成的战斗轮次
 Const 技能间隔 = 50       ' 点击间隔时间(ms)
 
 Dim 楼层坐标 
@@ -275,8 +275,8 @@ End Sub
 ' 常量定义移到函数外部（全局区域）
 Const END_COLOR_POS1 = 175   ' 结束界面Y偏移1
 Const END_COLOR_POS2 = 350   ' 结束界面Y偏移2
-Const END_COLOR1 = "2fa7ee"  ' 结束界面颜色1
-Const END_COLOR2 = "c6d7e7"  ' 结束界面颜色2
+Const END_COLOR1 = "34a9ef"  ' 结束界面颜色1
+Const END_COLOR2 = "c9d9e8"  ' 结束界面颜色2
 Const LEVELUP_COLOR_POS1 = 114  ' 升级弹窗Y偏移1
 Const LEVELUP_COLOR_POS2 = 172  ' 升级弹窗Y偏移2
 Const LEVELUP_COLOR1 = "49b8f2" ' 升级弹窗颜色1
@@ -347,8 +347,11 @@ Function IsBattleEnd(battlePos)
             ' 执行确认操作
     	dm.MoveTo battlePosResult(1), battlePosResult(2) + END_COLOR_POS2
     	LeftClick 1
+    	Delay 100
     	LeftClick 1
+    	Delay 100    	
     	LeftClick 1
+    	Delay 100
     	LeftClick 1
     Else
         TracePrint "[战斗结束] 验证未通过"
